@@ -293,9 +293,11 @@ export default function CanvasArea({
                       ? 'w-[300px]'
                       : acc.item.name.includes('Keyboard')
                         ? 'w-[140px]'
-                        : acc.item.name.includes('Mouse')
-                          ? 'w-[40px]'
-                          : 'w-[90px]'
+                        : acc.item.name.includes('Espresso')
+                          ? 'w-[180px]'
+                          : acc.item.name.includes('Mouse')
+                            ? 'w-[40px]'
+                            : 'w-[90px]'
             }`}
           />
 
@@ -423,16 +425,18 @@ export default function CanvasArea({
 
           {/* Side Table Zone */}
           {selectedState.sideTable && (
-            <img
-              src={selectedState.sideTable.image}
-              alt={selectedState.sideTable.name}
-              className="absolute w-auto h-[320px] object-contain transform animate-in slide-in-from-left-8 fade-in duration-700 pointer-events-auto"
-              style={{
-                top: '50%',
-                left: '50%',
-                transform: `translate(calc(-58% + ${tableOriginX}px), calc(-36% + ${tableOriginY + 80}px))`,
-              }}
-            />
+            <>
+              <img
+                src={selectedState.sideTable.image}
+                alt={selectedState.sideTable.name}
+                className="absolute w-auto h-[320px] object-contain transform animate-in slide-in-from-left-8 fade-in duration-700 pointer-events-auto"
+                style={{
+                  top: '50%',
+                  left: '50%',
+                  transform: `translate(calc(-58% + ${tableOriginX}px), calc(-36% + ${tableOriginY + 80}px))`,
+                }}
+              />
+            </>
           )}
 
           {/* Front Yard Zone — no base image, outdoor gear sits on floor */}

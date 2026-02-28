@@ -45,7 +45,7 @@ export default function InventoryPanel({
           tomorrow.
         </p>
       </div>
-      <div className="flex gap-6 overflow-x-auto px-8 pb-4 border-b border-black/5 dark:border-white/5 scrollbar-none snap-x mask-fade-edges">
+      <div className="flex gap-6 overflow-x-auto px-8 pb-4 border-b border-black/5 dark:border-white/5 scrollbar-none">
         {(
           [
             'desks',
@@ -69,7 +69,7 @@ export default function InventoryPanel({
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`pb-2 text-base font-semibold whitespace-nowrap snap-start relative transition-colors duration-300 ${
+              className={`pb-2 text-base font-semibold whitespace-nowrap relative transition-colors duration-300 ${
                 activeTab === tab
                   ? 'text-indigo-600 dark:text-indigo-400'
                   : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'

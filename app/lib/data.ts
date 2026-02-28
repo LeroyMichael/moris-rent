@@ -157,8 +157,8 @@ export const inventoryData = {
       price: 45,
       image: '/assets/v4/coffee_machine.png',
       type: 'coffee_station',
-      size: { cols: 3, rows: 3 },
-      originOffset: { x: 0, y: 0, z: 0 },
+      size: { cols: 4, rows: 4 },
+      originOffset: { x: 0, y: 10, z: 0 },
     },
   ] as InventoryItem[],
   outdoor_gear: [
