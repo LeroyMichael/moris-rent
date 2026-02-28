@@ -13,6 +13,9 @@ import { inventoryData } from '../lib/data';
 export default function WorkspaceBuilder() {
   const [state, setState] = useState<WorkspaceState>({
     desk: inventoryData.desks[0], // Standard Isometric Desk
+    sideTable: null,
+    frontYard: null,
+    hasRelaxArea: false,
     chair: {
       item: inventoryData.chairs[1],
       id: 'chair-init',
@@ -67,12 +70,48 @@ export default function WorkspaceBuilder() {
   // the client and server match. We'll simply let the component render.
 
   const handleSelectDesk = (item: InventoryItem) => {
-    setState((prev) => ({
-      ...prev,
-      desk: prev.desk?.id === item.id ? null : item,
-      // If we remove the desk, remove all accessories too
-      accessories: prev.desk?.id === item.id ? [] : prev.accessories,
-    }));
+    setState((prev) => {
+      const isRemoving = prev.desk?.id === item.id;
+      return {
+        ...prev,
+        desk: isRemoving ? null : item,
+        // If we remove the desk, remove all desk-bound accessories too
+        accessories: isRemoving
+          ? prev.accessories.filter((a) => a.zone !== 'desk')
+          : prev.accessories,
+      };
+    });
+    setSelectedItemId(null);
+  };
+
+  const handleSelectTable = (item: InventoryItem) => {
+    if (item.type === 'yard') return handleSelectYard(item);
+    if (item.type === 'desk') return handleSelectDesk(item);
+
+    setState((prev) => {
+      const isRemoving = prev.sideTable?.id === item.id;
+      return {
+        ...prev,
+        sideTable: isRemoving ? null : item,
+        accessories: isRemoving
+          ? prev.accessories.filter((a) => a.zone !== 'table')
+          : prev.accessories,
+      };
+    });
+    setSelectedItemId(null);
+  };
+
+  const handleSelectYard = (item: InventoryItem) => {
+    setState((prev) => {
+      const isRemoving = prev.frontYard?.id === item.id;
+      return {
+        ...prev,
+        frontYard: isRemoving ? null : item,
+        accessories: isRemoving
+          ? prev.accessories.filter((a) => a.zone !== 'yard')
+          : prev.accessories,
+      };
+    });
     setSelectedItemId(null);
   };
 
@@ -114,25 +153,78 @@ export default function WorkspaceBuilder() {
 
   const handleAddAccessory = (item: InventoryItem) => {
     setState((prev) => {
-      if (!prev.desk || !prev.desk.gridSize) return prev;
+      // Determine which zone this item belongs to
+      let targetZone: 'desk' | 'table' | 'yard' | 'relax' = 'desk';
+      if (item.type === 'coffee_station') targetZone = 'table';
+      if (item.type === 'outdoor_gear') targetZone = 'yard';
+      if (item.type === 'relax_zone') targetZone = 'relax';
+
+      const itemArea = (item.size?.cols || 1) * (item.size?.rows || 1);
+      const usedDeskBlocks = prev.accessories
+        .filter((a) => (a.zone || 'desk') === 'desk')
+        .reduce(
+          (s, a) => s + (a.item.size?.cols || 1) * (a.item.size?.rows || 1),
+          0,
+        );
+      const deskCapacity =
+        (prev.desk?.gridSize?.cols || 0) * (prev.desk?.gridSize?.rows || 0);
+
+      // Overflow logic for standard desk accessories
+      if (targetZone === 'desk' && usedDeskBlocks + itemArea > deskCapacity) {
+        targetZone = 'table';
+      }
+
+      let nextSideTable = prev.sideTable;
+      let nextFrontYard = prev.frontYard;
+      let nextHasRelaxArea = prev.hasRelaxArea;
+
+      if (targetZone === 'table' && !nextSideTable) {
+        nextSideTable = inventoryData.tables[0];
+      }
+      if (targetZone === 'yard' && !nextFrontYard) {
+        nextFrontYard = inventoryData.yards[0];
+      }
+      if (targetZone === 'relax') {
+        nextHasRelaxArea = true;
+      }
+
+      // Resolve targetGridItem — relax zone uses a hardcoded 8x8 grid
+      const RELAX_GRID = { cols: 8, rows: 8 };
+      const targetGridItem =
+        targetZone === 'desk'
+          ? prev.desk
+          : targetZone === 'table'
+            ? nextSideTable
+            : targetZone === 'relax'
+              ? { gridSize: RELAX_GRID }
+              : nextFrontYard;
+
+      if (!targetGridItem || !targetGridItem.gridSize) return prev;
 
       const itemSize = item.size || { cols: 1, rows: 1 };
+
+      // Filter placed items to ONLY check collisions against the target zone
+      const zoneAccessories = prev.accessories.filter(
+        (a) => (a.zone || 'desk') === targetZone,
+      );
+
       const slot = findFirstAvailableSlot(
-        prev.desk.gridSize,
-        prev.accessories,
+        targetGridItem.gridSize,
+        zoneAccessories,
         itemSize,
       );
 
       if (!slot) {
-        // Desk is full
+        // Target Grid is full
         return prev;
       }
 
-      const newItem = {
+      const newItem: PlacedItem = {
         item,
         id: `${item.id}-${Date.now()}`,
         x: slot.x,
         y: slot.y,
+        zone: targetZone,
       };
 
       // Auto-select the newly added item
@@ -140,6 +232,9 @@ export default function WorkspaceBuilder() {
 
       return {
         ...prev,
+        sideTable: nextSideTable,
+        frontYard: nextFrontYard,
+        hasRelaxArea: nextHasRelaxArea,
         accessories: [...prev.accessories, newItem],
       };
     });
@@ -154,22 +249,36 @@ export default function WorkspaceBuilder() {
       const newX = acc.x + dx;
       const newY = acc.y + dy;
 
-      const deskGrid = prev.desk?.gridSize || { cols: 5, rows: 3 };
+      const targetZone = acc.zone || 'desk';
+      const targetGridItem =
+        prev[
+          targetZone === 'desk'
+            ? 'desk'
+            : targetZone === 'table'
+              ? 'sideTable'
+              : 'frontYard'
+        ];
+
+      const grid = targetGridItem?.gridSize || { cols: 5, rows: 3 };
       const itemSize = acc.item.size || { cols: 1, rows: 1 };
 
       // Bounds checking
       if (
         newX < 0 ||
         newY < 0 ||
-        newX + itemSize.cols > deskGrid.cols ||
-        newY + itemSize.rows > deskGrid.rows
+        newX + itemSize.cols > grid.cols ||
+        newY + itemSize.rows > grid.rows
       ) {
         return prev;
       }
 
-      // Collision checking
+      // Collision checking ONLY within the same zone
       let collision = false;
-      for (const p of prev.accessories) {
+      const zoneAccessories = prev.accessories.filter(
+        (a) => (a.zone || 'desk') === targetZone,
+      );
+
+      for (const p of zoneAccessories) {
         if (p.id === id) continue; // Skip self
         const pSize = p.item.size || { cols: 1, rows: 1 };
         if (
@@ -215,7 +324,14 @@ export default function WorkspaceBuilder() {
   };
 
   const handleReset = () => {
-    setState({ desk: null, chair: null, accessories: [] });
+    setState({
+      desk: null,
+      sideTable: null,
+      frontYard: null,
+      hasRelaxArea: false,
+      chair: null,
+      accessories: [],
+    });
     setSelectedItemId(null);
   };
 
@@ -223,6 +339,8 @@ export default function WorkspaceBuilder() {
 
   const totalPrice =
     (state.desk?.price || 0) +
+    (state.sideTable?.price || 0) +
+    (state.frontYard?.price || 0) +
     (state.chair?.item.price || 0) +
     state.accessories.reduce((sum, acc) => sum + acc.item.price, 0);
 
@@ -259,7 +377,7 @@ export default function WorkspaceBuilder() {
         >
           <InventoryPanel
             selectedState={state}
-            onSelectDesk={handleSelectDesk}
+            onSelectDesk={handleSelectTable} // Renamed internal router
             onSelectChair={handleSelectChair}
             onAddAccessory={handleAddAccessory}
             onRemoveAccessory={handleRemoveAccessory}
@@ -279,6 +397,10 @@ export default function WorkspaceBuilder() {
           onRemoveItem={handleRemoveAccessory}
         />
       </div>
+
+      <footer className="w-full text-center py-3 text-sm text-slate-500 dark:text-slate-400 z-10 relative">
+        Leroy Gian Michael 2026
+      </footer>
 
       <CheckoutModal
         isOpen={isModalOpen}

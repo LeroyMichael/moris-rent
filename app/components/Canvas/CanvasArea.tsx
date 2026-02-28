@@ -44,12 +44,20 @@ export default function CanvasArea({
   const isDraggingRef = useRef(false);
   const hasDragged = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
+  const velocityRef = useRef({ x: 0, y: 0 });
+  const momentumRef = useRef<number | null>(null);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
+    // Cancel any ongoing momentum animation
+    if (momentumRef.current !== null) {
+      cancelAnimationFrame(momentumRef.current);
+      momentumRef.current = null;
+    }
     isDraggingRef.current = true;
     setIsDragging(true);
     hasDragged.current = false;
+    velocityRef.current = { x: 0, y: 0 };
     lastMousePos.current = { x: e.clientX, y: e.clientY };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
@@ -61,6 +69,8 @@ export default function CanvasArea({
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
       hasDragged.current = true;
     }
+    // Track velocity for momentum
+    velocityRef.current = { x: dx, y: dy };
     setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
     lastMousePos.current = { x: e.clientX, y: e.clientY };
   };
@@ -69,6 +79,23 @@ export default function CanvasArea({
     isDraggingRef.current = false;
     setIsDragging(false);
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+
+    // Apply momentum/inertia on release
+    let vx = velocityRef.current.x * 4;
+    let vy = velocityRef.current.y * 4;
+    const decay = 0.88;
+
+    const animate = () => {
+      vx *= decay;
+      vy *= decay;
+      if (Math.abs(vx) < 0.5 && Math.abs(vy) < 0.5) {
+        momentumRef.current = null;
+        return;
+      }
+      setPan((p) => ({ x: p.x + vx, y: p.y + vy }));
+      momentumRef.current = requestAnimationFrame(animate);
+    };
+    momentumRef.current = requestAnimationFrame(animate);
   };
 
   useEffect(() => {
@@ -92,6 +119,18 @@ export default function CanvasArea({
   const deskOriginX = selectedState.desk?.originOffset?.x ?? 0;
   const deskOriginY = selectedState.desk?.originOffset?.y ?? -70;
 
+  // New Zone Origins
+  const tableOriginX = selectedState.sideTable?.originOffset?.x ?? -380;
+  const tableOriginY = selectedState.sideTable?.originOffset?.y ?? 50;
+
+  // Yard: placed close to the left of the side table, slightly above
+  const yardOriginX = tableOriginX - 180;
+  const yardOriginY = tableOriginY - 80;
+
+  // Relax zone: to the right of the desk
+  const relaxOriginX = deskOriginX + 320;
+  const relaxOriginY = deskOriginY + 160;
+
   const stepX = 24; // X span of half a block
   const stepY = 12.5; // Y span of half a block
 
@@ -100,44 +139,64 @@ export default function CanvasArea({
     y: number,
     sizeCols: number,
     sizeRows: number,
+    zone: 'desk' | 'table' | 'yard' | 'relax' = 'desk',
   ) => {
-    // The top-most absolute corner of the *entire grid* should be firmly locked at (deskOriginX, deskOriginY) on screen.
-    // 1 unit of X moves down-right (+stepX, +stepY)
-    // 1 unit of Y moves down-left (-stepX, +stepY)
+    let originX = deskOriginX;
+    let originY = deskOriginY;
 
-    // We add sizeCols and sizeRows divided by 2 just to center the *image* on its own footprint bounds,
-    // but the starting coordinate of the footprint must rely strictly on standard isometric projection starting from 0,0.
+    if (zone === 'table') {
+      originX = tableOriginX;
+      originY = tableOriginY;
+    } else if (zone === 'yard') {
+      originX = yardOriginX;
+      originY = yardOriginY;
+    } else if (zone === 'relax') {
+      originX = relaxOriginX;
+      originY = relaxOriginY;
+    }
+
     const centerX = x + (sizeCols - 1) / 2;
     const centerY = y + (sizeRows - 1) / 2;
 
-    // The key fix: Standard Isometric Projection math from an absolute Top-Point Origin.
-    const screenX = deskOriginX + centerX * stepX - centerY * stepX;
-    const screenY = deskOriginY + centerX * stepY + centerY * stepY;
+    const screenX = originX + centerX * stepX - centerY * stepX;
+    // Apply Z-height offset (vertical displacement)
+    const zOffset =
+      zone === 'desk'
+        ? (selectedState.desk?.originOffset?.z ?? 0)
+        : zone === 'table'
+          ? (selectedState.sideTable?.originOffset?.z ?? 0)
+          : zone === 'yard'
+            ? (selectedState.frontYard?.originOffset?.z ?? 0)
+            : 0; // relax zone has no InventoryItem, no z-offset
+    const screenY = originY + centerX * stepY + centerY * stepY - zOffset;
 
     return { screenX, screenY };
   };
 
-  const renderGrid = () => {
-    if (!selectedState.desk?.gridSize || !selectedItemId) return null;
-    const { cols, rows } = selectedState.desk.gridSize;
+  const renderGrid = (
+    gridSize: { cols: number; rows: number } | undefined,
+    originX: number,
+    originY: number,
+    zoneStr: 'desk' | 'table' | 'yard' | 'relax',
+  ) => {
+    if (!gridSize || !selectedItemId) return null;
+    const { cols, rows } = gridSize;
     const cells = [];
 
     const selectedItem = selectedState.accessories.find(
       (a) => a.id === selectedItemId,
     );
+    // Only highlight footprint if the dragged item belongs to THIS zone
+    const isTargetZone = (selectedItem?.zone || 'desk') === zoneStr;
     const itemSize = selectedItem?.item.size || { cols: 1, rows: 1 };
-
-    // Desk bounding box centering
-    // For the overall grid centering, the top-most diamond is at 0,0.
-    // If the grid scales, deskOriginX/Y remains the absolute tip of the top corner.
 
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++) {
-        // True isometric top-left origin projection for each cell
-        const screenX = deskOriginX + x * stepX - y * stepX;
-        const screenY = deskOriginY + x * stepY + y * stepY;
+        const screenX = originX + x * stepX - y * stepX;
+        const screenY = originY + x * stepY + y * stepY;
 
         const isFootprint =
+          isTargetZone &&
           selectedItem &&
           x >= selectedItem.x &&
           x < selectedItem.x + itemSize.cols &&
@@ -146,8 +205,8 @@ export default function CanvasArea({
 
         cells.push(
           <div
-            key={`grid-${x}-${y}`}
-            className="absolute z-20 pointer-events-none transition-colors duration-200"
+            key={`grid-${zoneStr}-${x}-${y}`}
+            className="absolute z-[15] pointer-events-none transition-colors duration-200"
             style={{
               left: '50%',
               top: '50%',
@@ -188,6 +247,7 @@ export default function CanvasArea({
         acc.y,
         size.cols,
         size.rows,
+        (acc.zone || 'desk') as 'desk' | 'table' | 'yard' | 'relax',
       );
 
       const offsetX = acc.item.originOffset?.x || 0;
@@ -225,11 +285,17 @@ export default function CanvasArea({
             } ${
               acc.item.name.includes('Monitor')
                 ? 'w-[220px]'
-                : acc.item.name.includes('Keyboard')
-                  ? 'w-[140px]'
-                  : acc.item.name.includes('Mouse')
-                    ? 'w-[40px]'
-                    : 'w-[90px]'
+                : acc.item.name.includes('Motorcycle')
+                  ? 'w-[350px]'
+                  : acc.item.name.includes('Surfboard')
+                    ? 'w-[600px]'
+                    : acc.item.name.includes('Bean')
+                      ? 'w-[300px]'
+                      : acc.item.name.includes('Keyboard')
+                        ? 'w-[140px]'
+                        : acc.item.name.includes('Mouse')
+                          ? 'w-[40px]'
+                          : 'w-[90px]'
             }`}
           />
 
@@ -308,6 +374,7 @@ export default function CanvasArea({
     <section
       ref={containerRef}
       className={`flex-1 relative rounded-3xl bg-slate-50 dark:bg-[#0a0f1c] border border-dashed border-slate-200 dark:border-white/10 overflow-hidden flex items-center justify-center group ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+      style={{ touchAction: 'none', userSelect: 'none' }}
       onClick={(e) => {
         if (
           !hasDragged.current &&
@@ -344,8 +411,8 @@ export default function CanvasArea({
         >
           Select an Isometric Desk to start building
         </div>
-
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+          {/* Main Desk Zone */}
           {selectedState.desk && (
             <img
               src={selectedState.desk.image}
@@ -353,17 +420,56 @@ export default function CanvasArea({
               className="w-auto h-[480px] object-contain origin-center animate-in zoom-in-90 fade-in duration-700 pointer-events-auto"
             />
           )}
+
+          {/* Side Table Zone */}
+          {selectedState.sideTable && (
+            <img
+              src={selectedState.sideTable.image}
+              alt={selectedState.sideTable.name}
+              className="absolute w-auto h-[320px] object-contain transform animate-in slide-in-from-left-8 fade-in duration-700 pointer-events-auto"
+              style={{
+                top: '50%',
+                left: '50%',
+                transform: `translate(calc(-58% + ${tableOriginX}px), calc(-36% + ${tableOriginY + 80}px))`,
+              }}
+            />
+          )}
+
+          {/* Front Yard Zone — no base image, outdoor gear sits on floor */}
+
+          {/* Relax Zone — no base image, bean bag sits on floor right of desk */}
         </div>
-
-        {/* The generated Grid */}
-        {renderGrid()}
-
-        {selectedState.desk && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
-            {renderAccessories()}
-          </div>
+        {/* The generated Grids */}
+        {renderGrid(
+          selectedState.desk?.gridSize,
+          deskOriginX,
+          deskOriginY,
+          'desk',
         )}
-
+        {renderGrid(
+          selectedState.sideTable?.gridSize,
+          tableOriginX,
+          tableOriginY,
+          'table',
+        )}
+        {selectedState.frontYard &&
+          renderGrid(
+            selectedState.frontYard?.gridSize,
+            yardOriginX,
+            yardOriginY,
+            'yard',
+          )}
+        {selectedState.hasRelaxArea &&
+          renderGrid(
+            { cols: 8, rows: 8 },
+            relaxOriginX,
+            relaxOriginY,
+            'relax',
+          )}{' '}
+        {/* Ensure accessories container overlays base graphics but sits below UI */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+          {renderAccessories()}
+        </div>
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[100]">
           {selectedState.chair && (
             <div

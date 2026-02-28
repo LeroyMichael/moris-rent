@@ -13,7 +13,13 @@ interface InventoryPanelProps {
   onCheckout: () => void;
 }
 
-type TabType = 'desks' | 'chairs' | 'accessories';
+type TabType =
+  | 'desks'
+  | 'chairs'
+  | 'accessories'
+  | 'coffee_station'
+  | 'outdoor_gear'
+  | 'relax_zone';
 
 export default function InventoryPanel({
   selectedState,
@@ -39,23 +45,43 @@ export default function InventoryPanel({
           tomorrow.
         </p>
       </div>
-      <div className="flex gap-4 px-8 pb-4 border-b border-black/5 dark:border-white/5">
-        {(['desks', 'chairs', 'accessories'] as TabType[]).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`pb-2 text-base font-semibold capitalize relative transition-colors duration-300 ${
-              activeTab === tab
-                ? 'text-indigo-600 dark:text-indigo-400'
-                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            {tab === 'accessories' ? 'Extras' : tab}
-            {activeTab === tab && (
-              <span className="absolute -bottom-4 left-0 w-full h-0.75 bg-indigo-600 rounded-t-sm" />
-            )}
-          </button>
-        ))}
+      <div className="flex gap-6 overflow-x-auto px-8 pb-4 border-b border-black/5 dark:border-white/5 scrollbar-none snap-x mask-fade-edges">
+        {(
+          [
+            'desks',
+            'chairs',
+            'accessories',
+            'coffee_station',
+            'outdoor_gear',
+            'relax_zone',
+          ] as TabType[]
+        ).map((tab) => {
+          // Human-readable tab names
+          const labelMap: Record<TabType, string> = {
+            desks: 'Desks',
+            chairs: 'Chairs',
+            accessories: 'Extras',
+            coffee_station: 'Coffee',
+            outdoor_gear: 'Outdoor',
+            relax_zone: 'Relax',
+          };
+          return (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`pb-2 text-base font-semibold whitespace-nowrap snap-start relative transition-colors duration-300 ${
+                activeTab === tab
+                  ? 'text-indigo-600 dark:text-indigo-400'
+                  : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              {labelMap[tab]}
+              {activeTab === tab && (
+                <span className="absolute -bottom-4 left-0 w-full h-[3px] bg-indigo-600 rounded-t-sm" />
+              )}
+            </button>
+          );
+        })}
       </div>
       <div className="flex-1 overflow-y-auto px-8 py-6 scrollbar-thin">
         <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -73,34 +99,40 @@ export default function InventoryPanel({
               <ItemCard
                 key={item.id}
                 item={item}
-                isSelected={selectedState.chair?.id === item.id}
+                isSelected={selectedState.chair?.item.id === item.id}
                 onClick={onSelectChair}
               />
             ))}
           {activeTab === 'accessories' &&
             inventoryData.accessories.map((item) => {
               const count = selectedState.accessories.filter(
-                (acc) => acc.id === item.id,
+                (acc) => acc.item.id === item.id,
               ).length;
 
-              // Calculate Block System Limits based on 2D size
-              const usedBlocks = selectedState.accessories.reduce(
-                (sum, acc) => {
+              const usedDeskBlocks = selectedState.accessories
+                .filter((a) => (a.zone || 'desk') === 'desk')
+                .reduce((sum, acc) => {
                   const s = acc.item.size || { cols: 1, rows: 1 };
                   return sum + s.cols * s.rows;
-                },
-                0,
-              );
+                }, 0);
 
-              const deskGrid = selectedState.desk?.gridSize || {
-                cols: 0,
-                rows: 0,
-              };
-              const capacity = deskGrid.cols * deskGrid.rows;
-              const hasDesk = !!selectedState.desk;
-              const itemSize = item.size || { cols: 1, rows: 1 };
-              const itemArea = itemSize.cols * itemSize.rows;
-              const canAdd = usedBlocks + itemArea <= capacity;
+              const usedTableBlocks = selectedState.accessories
+                .filter((a) => a.zone === 'table')
+                .reduce((sum, acc) => {
+                  const s = acc.item.size || { cols: 1, rows: 1 };
+                  return sum + s.cols * s.rows;
+                }, 0);
+
+              const deskCapacity =
+                (selectedState.desk?.gridSize?.cols || 0) *
+                (selectedState.desk?.gridSize?.rows || 0);
+              const tableCapacity =
+                inventoryData.tables[0].gridSize!.cols *
+                inventoryData.tables[0].gridSize!.rows;
+
+              const itemArea = (item.size?.cols || 1) * (item.size?.rows || 1);
+              const canAddToDesk = usedDeskBlocks + itemArea <= deskCapacity;
+              const canAddToTable = usedTableBlocks + itemArea <= tableCapacity;
 
               return (
                 <ItemCard
@@ -108,7 +140,71 @@ export default function InventoryPanel({
                   item={item}
                   count={count}
                   isSelected={count > 0}
-                  disabled={!hasDesk || !canAdd}
+                  disabled={
+                    !selectedState.desk || (!canAddToDesk && !canAddToTable)
+                  }
+                  onClick={onAddAccessory}
+                  onRemove={onRemoveAccessory}
+                />
+              );
+            })}
+          {activeTab === 'coffee_station' &&
+            inventoryData.coffee_station.map((item) => {
+              const count = selectedState.accessories.filter(
+                (acc) => acc.item.id === item.id,
+              ).length;
+
+              const usedTableBlocks = selectedState.accessories
+                .filter((a) => a.zone === 'table')
+                .reduce((sum, acc) => {
+                  const s = acc.item.size || { cols: 1, rows: 1 };
+                  return sum + s.cols * s.rows;
+                }, 0);
+
+              const tableCapacity =
+                inventoryData.tables[0].gridSize!.cols *
+                inventoryData.tables[0].gridSize!.rows;
+              const itemArea = (item.size?.cols || 1) * (item.size?.rows || 1);
+
+              return (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  count={count}
+                  isSelected={count > 0}
+                  disabled={usedTableBlocks + itemArea > tableCapacity}
+                  onClick={onAddAccessory}
+                  onRemove={onRemoveAccessory}
+                />
+              );
+            })}
+          {activeTab === 'relax_zone' &&
+            inventoryData.relax_zone.map((item) => {
+              const count = selectedState.accessories.filter(
+                (acc) => acc.item.id === item.id,
+              ).length;
+              return (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  count={count}
+                  isSelected={count > 0}
+                  onClick={onAddAccessory}
+                  onRemove={onRemoveAccessory}
+                />
+              );
+            })}
+          {activeTab === 'outdoor_gear' &&
+            inventoryData.outdoor_gear.map((item) => {
+              const count = selectedState.accessories.filter(
+                (acc) => acc.item.id === item.id,
+              ).length;
+              return (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  count={count}
+                  isSelected={count > 0}
                   onClick={onAddAccessory}
                   onRemove={onRemoveAccessory}
                 />
