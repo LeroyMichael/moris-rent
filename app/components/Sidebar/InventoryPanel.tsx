@@ -7,7 +7,8 @@ interface InventoryPanelProps {
   selectedState: WorkspaceState;
   onSelectDesk: (item: InventoryItem) => void;
   onSelectChair: (item: InventoryItem) => void;
-  onToggleAccessory: (item: InventoryItem) => void;
+  onAddAccessory: (item: InventoryItem) => void;
+  onRemoveAccessory: (item: InventoryItem) => void;
   totalPrice: number;
   onCheckout: () => void;
 }
@@ -18,7 +19,8 @@ export default function InventoryPanel({
   selectedState,
   onSelectDesk,
   onSelectChair,
-  onToggleAccessory,
+  onAddAccessory,
+  onRemoveAccessory,
   totalPrice,
   onCheckout,
 }: InventoryPanelProps) {
@@ -27,7 +29,7 @@ export default function InventoryPanel({
   const canCheckout = totalPrice > 0;
 
   return (
-    <aside className="w-[400px] flex flex-col rounded-3xl overflow-hidden shrink-0 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border border-white/50 dark:border-white/10 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.08)] dark:shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)]">
+    <aside className="h-full w-full flex flex-col rounded-3xl overflow-hidden shrink-0 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border border-white/50 dark:border-white/10 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.08)] dark:shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)]">
       <div className="p-8 pb-6">
         <h2 className="text-2xl font-bold tracking-tight mb-2">
           Build Your Dream Office
@@ -37,7 +39,6 @@ export default function InventoryPanel({
           tomorrow.
         </p>
       </div>
-
       <div className="flex gap-4 px-8 pb-4 border-b border-black/5 dark:border-white/5">
         {(['desks', 'chairs', 'accessories'] as TabType[]).map((tab) => (
           <button
@@ -51,12 +52,11 @@ export default function InventoryPanel({
           >
             {tab === 'accessories' ? 'Extras' : tab}
             {activeTab === tab && (
-              <span className="absolute bottom-[-16px] left-0 w-full h-[3px] bg-indigo-600 rounded-t-sm" />
+              <span className="absolute -bottom-4 left-0 w-full h-0.75 bg-indigo-600 rounded-t-sm" />
             )}
           </button>
         ))}
       </div>
-
       <div className="flex-1 overflow-y-auto px-8 py-6 scrollbar-thin">
         <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
           {activeTab === 'desks' &&
@@ -78,19 +78,44 @@ export default function InventoryPanel({
               />
             ))}
           {activeTab === 'accessories' &&
-            inventoryData.accessories.map((item) => (
-              <ItemCard
-                key={item.id}
-                item={item}
-                isSelected={selectedState.accessories.some(
-                  (acc) => acc.id === item.id,
-                )}
-                onClick={onToggleAccessory}
-              />
-            ))}
+            inventoryData.accessories.map((item) => {
+              const count = selectedState.accessories.filter(
+                (acc) => acc.id === item.id,
+              ).length;
+
+              // Calculate Block System Limits based on 2D size
+              const usedBlocks = selectedState.accessories.reduce(
+                (sum, acc) => {
+                  const s = acc.item.size || { cols: 1, rows: 1 };
+                  return sum + s.cols * s.rows;
+                },
+                0,
+              );
+
+              const deskGrid = selectedState.desk?.gridSize || {
+                cols: 0,
+                rows: 0,
+              };
+              const capacity = deskGrid.cols * deskGrid.rows;
+              const hasDesk = !!selectedState.desk;
+              const itemSize = item.size || { cols: 1, rows: 1 };
+              const itemArea = itemSize.cols * itemSize.rows;
+              const canAdd = usedBlocks + itemArea <= capacity;
+
+              return (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  count={count}
+                  isSelected={count > 0}
+                  disabled={!hasDesk || !canAdd}
+                  onClick={onAddAccessory}
+                  onRemove={onRemoveAccessory}
+                />
+              );
+            })}
         </div>
       </div>
-
       <div className="p-8 border-t border-black/5 dark:border-white/5 bg-white/40 dark:bg-slate-900/40">
         <div className="flex justify-between items-center mb-4">
           <span className="text-[0.95rem] text-slate-500 dark:text-slate-400">
@@ -103,7 +128,7 @@ export default function InventoryPanel({
           onClick={onCheckout}
           className="w-full p-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl font-semibold flex justify-center items-center gap-2 transition-all duration-300 hover:opacity-90 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
         >
-          View Summary <ArrowRight className="w-[18px] h-[18px]" />
+          View Summary <ArrowRight className="w-4.5 h-4.5" />
         </button>
       </div>
     </aside>
