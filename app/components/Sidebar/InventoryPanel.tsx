@@ -45,7 +45,7 @@ export default function InventoryPanel({
           tomorrow.
         </p>
       </div>
-      <div className="flex gap-6 overflow-x-auto px-8 pb-4 border-b border-black/5 dark:border-white/5 scrollbar-none">
+      <div className="flex gap-6 overflow-x-auto px-8 pb-4 border-b border-black/5 dark:border-white/5 scrollbar-thin">
         {(
           [
             'desks',

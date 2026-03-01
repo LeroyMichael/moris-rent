@@ -47,8 +47,16 @@ export default function CanvasArea({
   const velocityRef = useRef({ x: 0, y: 0 });
   const momentumRef = useRef<number | null>(null);
 
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(
+    new Map(),
+  );
+  const prevPinchDistRef = useRef<number | null>(null);
+
   const handlePointerDown = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
+
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
     // Cancel any ongoing momentum animation
     if (momentumRef.current !== null) {
       cancelAnimationFrame(momentumRef.current);
@@ -58,44 +66,102 @@ export default function CanvasArea({
     setIsDragging(true);
     hasDragged.current = false;
     velocityRef.current = { x: 0, y: 0 };
-    lastMousePos.current = { x: e.clientX, y: e.clientY };
+
+    if (activePointersRef.current.size === 1) {
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+    } else if (activePointersRef.current.size === 2) {
+      const pts = Array.from(activePointersRef.current.values());
+      prevPinchDistRef.current = Math.hypot(
+        pts[0].x - pts[1].x,
+        pts[0].y - pts[1].y,
+      );
+    }
+
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!isDraggingRef.current) return;
-    const dx = e.clientX - lastMousePos.current.x;
-    const dy = e.clientY - lastMousePos.current.y;
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-      hasDragged.current = true;
+
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+      });
     }
-    // Track velocity for momentum
-    velocityRef.current = { x: dx, y: dy };
-    setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
-    lastMousePos.current = { x: e.clientX, y: e.clientY };
+
+    if (activePointersRef.current.size === 2) {
+      // Handle pinch zoom
+      const pts = Array.from(activePointersRef.current.values());
+      const currentDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+
+      if (prevPinchDistRef.current !== null) {
+        const delta = currentDist - prevPinchDistRef.current;
+        const zoomDelta = delta * 0.005; // Pinch sensitivity
+        setZoomLevel((z) => Math.min(Math.max(z + zoomDelta, 0.4), 3));
+      }
+      prevPinchDistRef.current = currentDist;
+      hasDragged.current = true;
+      return;
+    }
+
+    if (activePointersRef.current.size === 1) {
+      const dx = e.clientX - lastMousePos.current.x;
+      const dy = e.clientY - lastMousePos.current.y;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        hasDragged.current = true;
+      }
+      // Track velocity for momentum
+      velocityRef.current = { x: dx, y: dy };
+      setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    isDraggingRef.current = false;
-    setIsDragging(false);
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    activePointersRef.current.delete(e.pointerId);
 
-    // Apply momentum/inertia on release
-    let vx = velocityRef.current.x * 4;
-    let vy = velocityRef.current.y * 4;
-    const decay = 0.88;
+    if (activePointersRef.current.size < 2) {
+      prevPinchDistRef.current = null;
+    }
 
-    const animate = () => {
-      vx *= decay;
-      vy *= decay;
-      if (Math.abs(vx) < 0.5 && Math.abs(vy) < 0.5) {
-        momentumRef.current = null;
-        return;
+    if (activePointersRef.current.size === 1) {
+      // If we go from 2 fingers to 1 finger, reset lastMousePos to prevent jump
+      const remainingPointer = Array.from(
+        activePointersRef.current.values(),
+      )[0];
+      lastMousePos.current = { x: remainingPointer.x, y: remainingPointer.y };
+      return;
+    }
+
+    if (activePointersRef.current.size === 0) {
+      isDraggingRef.current = false;
+      setIsDragging(false);
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore if not captured
       }
-      setPan((p) => ({ x: p.x + vx, y: p.y + vy }));
-      momentumRef.current = requestAnimationFrame(animate);
-    };
-    momentumRef.current = requestAnimationFrame(animate);
+
+      // Apply momentum/inertia on release only if it was a single-finger pan
+      let vx = velocityRef.current.x * 4;
+      let vy = velocityRef.current.y * 4;
+      const decay = 0.88;
+
+      if (Math.abs(vx) > 0.5 || Math.abs(vy) > 0.5) {
+        const animate = () => {
+          vx *= decay;
+          vy *= decay;
+          if (Math.abs(vx) < 0.5 && Math.abs(vy) < 0.5) {
+            momentumRef.current = null;
+            return;
+          }
+          setPan((p) => ({ x: p.x + vx, y: p.y + vy }));
+          momentumRef.current = requestAnimationFrame(animate);
+        };
+        momentumRef.current = requestAnimationFrame(animate);
+      }
+    }
   };
 
   useEffect(() => {
@@ -300,76 +366,102 @@ export default function CanvasArea({
                             : 'w-[90px]'
             }`}
           />
-
-          {/* Movement Controls Overlay */}
-          {isSelected && onMoveItem && (
-            <div className="absolute top-[10%] left-1/2 -translate-x-1/2 -translate-y-[120%] z-[300] w-max opacity-0 group-hover:opacity-100 hover:opacity-100 transition-all duration-300">
-              <div className="grid grid-cols-3 gap-1.5 p-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] border border-slate-200/50 dark:border-white/10">
-                {/* Row 1: Up-Left, Empty, Up-Right */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onMoveItem(acc.id, -1, 0);
-                  }}
-                  title="Move Up-Left (Left)"
-                  className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:scale-110 active:scale-95"
-                >
-                  <ArrowUpLeft size={18} />
-                </button>
-                <div />
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onMoveItem(acc.id, 0, -1);
-                  }}
-                  title="Move Up-Right (Back)"
-                  className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:scale-110 active:scale-95"
-                >
-                  <ArrowUpRight size={18} />
-                </button>
-
-                {/* Row 2: Empty, Trash, Empty */}
-                <div />
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemoveItem?.(acc.item, acc.id);
-                  }}
-                  title="Remove Item"
-                  className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-500/20 hover:text-red-600 dark:hover:text-red-400 transition-all hover:scale-110 active:scale-95"
-                >
-                  <Trash2 size={18} />
-                </button>
-                <div />
-
-                {/* Row 3: Down-Left, Empty, Down-Right */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onMoveItem(acc.id, 0, 1);
-                  }}
-                  title="Move Down-Left (Front)"
-                  className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:scale-110 active:scale-95"
-                >
-                  <ArrowDownLeft size={18} />
-                </button>
-                <div />
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onMoveItem(acc.id, 1, 0);
-                  }}
-                  title="Move Down-Right (Right)"
-                  className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:scale-110 active:scale-95"
-                >
-                  <ArrowDownRight size={18} />
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       );
     });
+  };
+
+  const renderSelectedOverlay = () => {
+    if (!selectedItemId || !onMoveItem) return null;
+    const acc = selectedState.accessories.find((a) => a.id === selectedItemId);
+    if (!acc) return null;
+
+    const size = acc.item.size || { cols: 1, rows: 1 };
+    const { screenX, screenY } = getScreenPos(
+      acc.x,
+      acc.y,
+      size.cols,
+      size.rows,
+      (acc.zone || 'desk') as 'desk' | 'table' | 'yard' | 'relax',
+    );
+
+    const offsetX = acc.item.originOffset?.x || 0;
+    const offsetY = acc.item.originOffset?.y || 0;
+
+    return (
+      <div
+        className="absolute w-0 h-0 z-[200] pointer-events-none"
+        style={{
+          left: '50%',
+          top: '50%',
+          transform: `translate(calc(-50% + ${screenX + offsetX}px), calc(-80% + ${screenY + stepY + offsetY}px))`,
+        }}
+      >
+        <div className="absolute top-[10%] left-1/2 -translate-x-1/2 -translate-y-[calc(120%+150px)] pointer-events-auto w-max transition-all duration-300">
+          <div className="grid grid-cols-3 gap-1.5 p-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] border border-slate-200/50 dark:border-white/10">
+            {/* Row 1: Up-Left, Empty, Up-Right */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveItem(acc.id, -1, 0);
+              }}
+              title="Move Up-Left (Left)"
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:scale-110 active:scale-95"
+            >
+              <ArrowUpLeft size={18} />
+            </button>
+            <div />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveItem(acc.id, 0, -1);
+              }}
+              title="Move Up-Right (Back)"
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:scale-110 active:scale-95"
+            >
+              <ArrowUpRight size={18} />
+            </button>
+
+            {/* Row 2: Empty, Trash, Empty */}
+            <div />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveItem?.(acc.item, acc.id);
+              }}
+              title="Remove Item"
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-500/20 hover:text-red-600 dark:hover:text-red-400 transition-all hover:scale-110 active:scale-95"
+            >
+              <Trash2 size={18} />
+            </button>
+            <div />
+
+            {/* Row 3: Down-Left, Empty, Down-Right */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveItem(acc.id, 0, 1);
+              }}
+              title="Move Down-Left (Front)"
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:scale-110 active:scale-95"
+            >
+              <ArrowDownLeft size={18} />
+            </button>
+            <div />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveItem(acc.id, 1, 0);
+              }}
+              title="Move Down-Right (Right)"
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all hover:scale-110 active:scale-95"
+            >
+              <ArrowDownRight size={18} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -489,6 +581,9 @@ export default function CanvasArea({
               />
             </div>
           )}
+        </div>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[150]">
+          {renderSelectedOverlay()}
         </div>
       </div>
 
